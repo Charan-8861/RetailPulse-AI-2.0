@@ -4,7 +4,8 @@ import streamlit as st
 from utils.auth import (
     create_users_table,
     register_user,
-    authenticate_user
+    authenticate_user,
+    reset_password
 )
 
 from utils.ui_theme import (
@@ -117,7 +118,7 @@ os.makedirs(
 
 
 # ============================================================
-# CREATE USER DATABASE
+# CREATE / MIGRATE USERS DATABASE
 # ============================================================
 
 create_users_table()
@@ -128,110 +129,58 @@ create_users_table()
 # ============================================================
 
 if "logged_in" not in st.session_state:
-
     st.session_state.logged_in = False
 
-
 if "username" not in st.session_state:
-
     st.session_state.username = None
 
 
 application_defaults = {
 
-    "dataset_configured":
-        False,
+    "dataset_configured": False,
 
-    "retail_df":
-        None,
+    "retail_df": None,
+    "analysis_df": None,
 
-    "analysis_df":
-        None,
+    "current_file_name": None,
+    "current_sheet_name": None,
 
-    "current_file_name":
-        None,
+    "date_column": None,
+    "sales_column": None,
+    "quantity_column": None,
+    "product_column": None,
+    "category_column": None,
+    "region_column": None,
+    "customer_column": None,
 
-    "current_sheet_name":
-        None,
+    "lstm_trained": False,
 
-    "date_column":
-        None,
+    "mae": None,
+    "rmse": None,
+    "mape": None,
+    "r2": None,
 
-    "sales_column":
-        None,
+    "comparison_df": None,
+    "future_df": None,
+    "loss_df": None,
+    "combined_df": None,
+    "model_comparison": None,
 
-    "quantity_column":
-        None,
+    "best_model": None,
+    "best_mape": None,
 
-    "product_column":
-        None,
+    "percentage_change": None,
+    "epochs_used": None,
 
-    "category_column":
-        None,
-
-    "region_column":
-        None,
-
-    "customer_column":
-        None,
-
-    "lstm_trained":
-        False,
-
-    "mae":
-        None,
-
-    "rmse":
-        None,
-
-    "mape":
-        None,
-
-    "r2":
-        None,
-
-    "comparison_df":
-        None,
-
-    "future_df":
-        None,
-
-    "loss_df":
-        None,
-
-    "combined_df":
-        None,
-
-    "model_comparison":
-        None,
-
-    "best_model":
-        None,
-
-    "best_mape":
-        None,
-
-    "percentage_change":
-        None,
-
-    "epochs_used":
-        None,
-
-    "forecast_frequency":
-        None,
-
-    "forecast_target_used":
-        None
+    "forecast_frequency": None,
+    "forecast_target_used": None
 }
 
 
 for key, value in application_defaults.items():
 
     if key not in st.session_state:
-
-        st.session_state[
-            key
-        ] = value
+        st.session_state[key] = value
 
 
 # ============================================================
@@ -265,14 +214,11 @@ if not st.session_state.logged_in:
 
 
     # ========================================================
-    # LOGIN LAYOUT
+    # LOGIN PAGE LAYOUT
     # ========================================================
 
     left_side, right_side = st.columns(
-        [
-            1.08,
-            0.92
-        ],
+        [1.08, 0.92],
         gap="large"
     )
 
@@ -308,11 +254,9 @@ if not st.session_state.logged_in:
         st.write("")
 
 
-        feature_col1, feature_col2 = (
-            st.columns(
-                2,
-                gap="medium"
-            )
+        feature_col1, feature_col2 = st.columns(
+            2,
+            gap="medium"
         )
 
 
@@ -399,27 +343,30 @@ if not st.session_state.logged_in:
         )
 
         st.caption(
-            "Sign in to your RetailPulse AI 2.0 account"
+            "Access your RetailPulse AI 2.0 account"
         )
 
         st.write("")
 
 
         # ====================================================
-        # LOGIN CARD
+        # AUTHENTICATION CARD
         # ====================================================
 
         with st.container(
             border=True
         ):
 
-            login_tab, register_tab = (
-                st.tabs(
-                    [
-                        "🔐 Login",
-                        "📝 Register"
-                    ]
-                )
+            (
+                login_tab,
+                register_tab,
+                forgot_tab
+            ) = st.tabs(
+                [
+                    "🔐 Login",
+                    "📝 Register",
+                    "🔑 Forgot Password"
+                ]
             )
 
 
@@ -431,22 +378,24 @@ if not st.session_state.logged_in:
 
                 st.write("")
 
-                login_username = (
-                    st.text_input(
-                        "Username",
-                        placeholder="Enter your username",
-                        key="login_username"
-                    )
+                login_username = st.text_input(
+                    "Username",
+                    placeholder="Enter your username",
+                    key="login_username"
                 )
 
 
-                login_password = (
-                    st.text_input(
-                        "Password",
-                        type="password",
-                        placeholder="Enter your password",
-                        key="login_password"
-                    )
+                login_password = st.text_input(
+                    "Password",
+                    type="password",
+                    placeholder="Enter your password",
+                    key="login_password"
+                )
+
+
+                st.caption(
+                    "Forgot your password? Open the "
+                    "**🔑 Forgot Password** tab."
                 )
 
 
@@ -481,19 +430,15 @@ if not st.session_state.logged_in:
 
                     else:
 
-                        success, user = (
-                            authenticate_user(
-                                username_clean,
-                                login_password
-                            )
+                        success, user = authenticate_user(
+                            username_clean,
+                            login_password
                         )
 
 
                         if success:
 
-                            st.session_state.logged_in = (
-                                True
-                            )
+                            st.session_state.logged_in = True
 
                             st.session_state.username = (
                                 user[1]
@@ -518,38 +463,39 @@ if not st.session_state.logged_in:
                 st.write("")
 
 
-                register_username = (
-                    st.text_input(
-                        "Choose Username",
-                        placeholder="Create a username",
-                        key="register_username"
-                    )
+                register_username = st.text_input(
+                    "Choose Username",
+                    placeholder="Create a username",
+                    key="register_username"
                 )
 
 
-                register_password = (
-                    st.text_input(
-                        "Choose Password",
-                        type="password",
-                        placeholder="Create a password",
-                        key="register_password"
-                    )
+                register_email = st.text_input(
+                    "Email Address",
+                    placeholder="Enter your email address",
+                    key="register_email"
                 )
 
 
-                confirm_password = (
-                    st.text_input(
-                        "Confirm Password",
-                        type="password",
-                        placeholder="Confirm your password",
-                        key="confirm_password"
-                    )
+                register_password = st.text_input(
+                    "Choose Password",
+                    type="password",
+                    placeholder="Create a password",
+                    key="register_password"
+                )
+
+
+                confirm_password = st.text_input(
+                    "Confirm Password",
+                    type="password",
+                    placeholder="Confirm your password",
+                    key="confirm_password"
                 )
 
 
                 st.caption(
-                    "Username should contain at least 3 characters. "
-                    "Password should contain at least 6 characters."
+                    "Username must contain at least 3 characters. "
+                    "Password must contain at least 6 characters."
                 )
 
 
@@ -569,8 +515,21 @@ if not st.session_state.logged_in:
                     )
 
 
+                    email_clean = (
+                        register_email.strip().lower()
+                        if register_email
+                        else ""
+                    )
+
+
+                    # -----------------------------------------
+                    # EMPTY FIELD CHECK
+                    # -----------------------------------------
+
                     if (
                         not username_clean
+                        or
+                        not email_clean
                         or
                         not register_password
                         or
@@ -582,6 +541,10 @@ if not st.session_state.logged_in:
                         )
 
 
+                    # -----------------------------------------
+                    # USERNAME CHECK
+                    # -----------------------------------------
+
                     elif len(
                         username_clean
                     ) < 3:
@@ -592,6 +555,25 @@ if not st.session_state.logged_in:
                         )
 
 
+                    # -----------------------------------------
+                    # BASIC EMAIL CHECK
+                    # -----------------------------------------
+
+                    elif (
+                        "@" not in email_clean
+                        or
+                        "." not in email_clean.split("@")[-1]
+                    ):
+
+                        st.error(
+                            "Please enter a valid email address."
+                        )
+
+
+                    # -----------------------------------------
+                    # PASSWORD LENGTH
+                    # -----------------------------------------
+
                     elif len(
                         register_password
                     ) < 6:
@@ -601,6 +583,10 @@ if not st.session_state.logged_in:
                             "6 characters."
                         )
 
+
+                    # -----------------------------------------
+                    # CONFIRM PASSWORD
+                    # -----------------------------------------
 
                     elif (
                         register_password
@@ -613,13 +599,16 @@ if not st.session_state.logged_in:
                         )
 
 
+                    # -----------------------------------------
+                    # REGISTER
+                    # -----------------------------------------
+
                     else:
 
-                        success, message = (
-                            register_user(
-                                username_clean,
-                                register_password
-                            )
+                        success, message = register_user(
+                            username_clean,
+                            email_clean,
+                            register_password
                         )
 
 
@@ -641,6 +630,170 @@ if not st.session_state.logged_in:
                                 message
                             )
 
+
+            # =================================================
+            # FORGOT PASSWORD TAB
+            # =================================================
+
+            with forgot_tab:
+
+                st.write("")
+
+                st.subheader(
+                    "Reset Password"
+                )
+
+                st.caption(
+                    "Enter your username and registered email "
+                    "address to create a new password."
+                )
+
+
+                reset_username = st.text_input(
+                    "Registered Username",
+                    placeholder="Enter your username",
+                    key="reset_username"
+                )
+
+
+                reset_email = st.text_input(
+                    "Registered Email",
+                    placeholder="Enter your registered email",
+                    key="reset_email"
+                )
+
+
+                new_password = st.text_input(
+                    "New Password",
+                    type="password",
+                    placeholder="Enter a new password",
+                    key="new_password"
+                )
+
+
+                confirm_new_password = st.text_input(
+                    "Confirm New Password",
+                    type="password",
+                    placeholder="Confirm your new password",
+                    key="confirm_new_password"
+                )
+
+
+                st.caption(
+                    "For security, the username and email must "
+                    "match the registered account."
+                )
+
+
+                st.write("")
+
+
+                if st.button(
+                    "Reset Password",
+                    type="primary",
+                    use_container_width=True,
+                    key="reset_password_button"
+                ):
+
+                    username_clean = (
+                        reset_username.strip()
+                        if reset_username
+                        else ""
+                    )
+
+
+                    email_clean = (
+                        reset_email.strip().lower()
+                        if reset_email
+                        else ""
+                    )
+
+
+                    # -----------------------------------------
+                    # EMPTY FIELD CHECK
+                    # -----------------------------------------
+
+                    if (
+                        not username_clean
+                        or
+                        not email_clean
+                        or
+                        not new_password
+                        or
+                        not confirm_new_password
+                    ):
+
+                        st.warning(
+                            "Please complete all password "
+                            "reset fields."
+                        )
+
+
+                    # -----------------------------------------
+                    # PASSWORD LENGTH
+                    # -----------------------------------------
+
+                    elif len(
+                        new_password
+                    ) < 6:
+
+                        st.error(
+                            "New password must contain at least "
+                            "6 characters."
+                        )
+
+
+                    # -----------------------------------------
+                    # PASSWORD CONFIRMATION
+                    # -----------------------------------------
+
+                    elif (
+                        new_password
+                        !=
+                        confirm_new_password
+                    ):
+
+                        st.error(
+                            "New passwords do not match."
+                        )
+
+
+                    # -----------------------------------------
+                    # RESET PASSWORD
+                    # -----------------------------------------
+
+                    else:
+
+                        success, message = reset_password(
+                            username_clean,
+                            email_clean,
+                            new_password
+                        )
+
+
+                        if success:
+
+                            st.success(
+                                f"✅ {message}"
+                            )
+
+                            st.info(
+                                "Your password has been updated. "
+                                "Open the Login tab and sign in "
+                                "using your new password."
+                            )
+
+
+                        else:
+
+                            st.error(
+                                message
+                            )
+
+
+            # =================================================
+            # SECURITY FOOTER
+            # =================================================
 
             st.divider()
 
@@ -701,7 +854,7 @@ with st.sidebar:
 
 
     # ========================================================
-    # USER
+    # USER CARD
     # ========================================================
 
     username_display = (
@@ -745,7 +898,7 @@ with st.sidebar:
 
 
     # ========================================================
-    # ACTIVE DATASET
+    # ACTIVE DATASET DETAILS
     # ========================================================
 
     if (
@@ -839,7 +992,7 @@ page = st.sidebar.radio(
 
 
 # ============================================================
-# FORECAST SUMMARY
+# SIDEBAR FORECAST SUMMARY
 # ============================================================
 
 with st.sidebar:

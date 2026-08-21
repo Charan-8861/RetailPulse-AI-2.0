@@ -1,31 +1,9 @@
-import os
 import sqlite3
 import hashlib
-import hmac
-import secrets
+import os
 
 
-# ============================================================
-# PROJECT / DATABASE PATH
-# ============================================================
-
-UTILS_DIR = os.path.dirname(
-    os.path.abspath(__file__)
-)
-
-BASE_DIR = os.path.dirname(
-    UTILS_DIR
-)
-
-DATABASE_DIR = os.path.join(
-    BASE_DIR,
-    "database"
-)
-
-DB_PATH = os.path.join(
-    DATABASE_DIR,
-    "users.db"
-)
+DB_PATH = "database/users.db"
 
 
 # ============================================================
@@ -33,207 +11,74 @@ DB_PATH = os.path.join(
 # ============================================================
 
 def get_connection():
+    os.makedirs("database", exist_ok=True)
 
-    os.makedirs(
-        DATABASE_DIR,
-        exist_ok=True
-    )
-
-    connection = sqlite3.connect(
+    return sqlite3.connect(
         DB_PATH,
         check_same_thread=False
     )
 
-    return connection
-
 
 # ============================================================
-# CREATE USERS TABLE
+# CREATE / UPDATE USERS TABLE
 # ============================================================
 
 def create_users_table():
+    """
+    Create the users table if it does not exist.
 
-    connection = get_connection()
+    Also upgrades an older RetailPulse database by adding
+    the email column when necessary.
+    """
 
-    try:
+    conn = get_connection()
+    cursor = conn.cursor()
 
-        cursor = connection.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT,
+            password TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
 
+    # --------------------------------------------------------
+    # MIGRATE OLD DATABASE
+    # --------------------------------------------------------
+
+    cursor.execute(
+        "PRAGMA table_info(users)"
+    )
+
+    columns = [
+        row[1]
+        for row in cursor.fetchall()
+    ]
+
+    if "email" not in columns:
         cursor.execute(
             """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                password TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
+            ALTER TABLE users
+            ADD COLUMN email TEXT
             """
         )
 
-        connection.commit()
-
-    finally:
-
-        connection.close()
+    conn.commit()
+    conn.close()
 
 
 # ============================================================
 # PASSWORD HASHING
 # ============================================================
 
-def hash_password(
-    password,
-    salt=None
-):
-    """
-    Hash a password using PBKDF2-HMAC-SHA256.
-
-    Stored format:
-    salt$hash
-    """
-
-    if password is None:
-        raise ValueError(
-            "Password cannot be None."
-        )
-
-    password = str(
-        password
-    )
-
-
-    if salt is None:
-
-        salt = secrets.token_hex(
-            16
-        )
-
-
-    derived_key = hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode(
-            "utf-8"
-        ),
-        salt.encode(
-            "utf-8"
-        ),
-        200_000
-    )
-
-
-    password_hash = derived_key.hex()
-
-
-    return (
-        f"{salt}${password_hash}"
-    )
-
-
-# ============================================================
-# PASSWORD VERIFICATION
-# ============================================================
-
-def verify_password(
-    password,
-    stored_password
-):
-    """
-    Verify a password against its stored PBKDF2 hash.
-
-    Also supports the older SHA-256 hashes from
-    the earlier RetailPulse version.
-    """
-
-    if (
-        password is None
-        or
-        stored_password is None
-    ):
-        return False
-
-
-    password = str(
-        password
-    )
-
-
-    stored_password = str(
-        stored_password
-    )
-
-
-    # ========================================================
-    # NEW PBKDF2 FORMAT
-    # ========================================================
-
-    if "$" in stored_password:
-
-        try:
-
-            salt, saved_hash = (
-                stored_password.split(
-                    "$",
-                    1
-                )
-            )
-
-
-            calculated = hashlib.pbkdf2_hmac(
-                "sha256",
-                password.encode(
-                    "utf-8"
-                ),
-                salt.encode(
-                    "utf-8"
-                ),
-                200_000
-            ).hex()
-
-
-            return hmac.compare_digest(
-                calculated,
-                saved_hash
-            )
-
-        except Exception:
-
-            return False
-
-
-    # ========================================================
-    # LEGACY SHA-256 SUPPORT
-    # ========================================================
-
-    legacy_hash = hashlib.sha256(
-        password.encode(
-            "utf-8"
-        )
+def hash_password(password):
+    return hashlib.sha256(
+        password.encode("utf-8")
     ).hexdigest()
-
-
-    return hmac.compare_digest(
-        legacy_hash,
-        stored_password
-    )
-
-
-# ============================================================
-# USERNAME CLEANING
-# ============================================================
-
-def normalize_username(
-    username
-):
-    """
-    Normalize username input.
-    """
-
-    if username is None:
-        return ""
-
-    return str(
-        username
-    ).strip()
 
 
 # ============================================================
@@ -242,127 +87,152 @@ def normalize_username(
 
 def register_user(
     username,
+    email,
     password
 ):
+    """
+    Register a new RetailPulse user.
+    """
 
-    username = normalize_username(
-        username
-    )
+    username = username.strip()
+    email = email.strip().lower()
 
-
-    # ========================================================
-    # VALIDATION
-    # ========================================================
+    # --------------------------------------------------------
+    # BASIC VALIDATION
+    # --------------------------------------------------------
 
     if not username:
+        return False, "Username is required."
 
-        return (
-            False,
-            "Username is required."
-        )
-
+    if not email:
+        return False, "Email address is required."
 
     if not password:
+        return False, "Password is required."
 
-        return (
-            False,
-            "Password is required."
-        )
-
-
-    if len(
-        username
-    ) < 3:
-
+    if len(username) < 3:
         return (
             False,
             "Username must contain at least 3 characters."
         )
 
-
-    if len(
-        username
-    ) > 50:
-
-        return (
-            False,
-            "Username must contain 50 characters or fewer."
-        )
-
-
-    if len(
-        password
-    ) < 6:
-
+    if len(password) < 6:
         return (
             False,
             "Password must contain at least 6 characters."
         )
 
+    if (
+        "@" not in email
+        or "." not in email.split("@")[-1]
+    ):
+        return (
+            False,
+            "Please enter a valid email address."
+        )
 
-    # ========================================================
-    # PASSWORD HASH
-    # ========================================================
+    conn = get_connection()
+    cursor = conn.cursor()
 
-    hashed_password = hash_password(
-        password
+    # --------------------------------------------------------
+    # CHECK USERNAME
+    # --------------------------------------------------------
+
+    cursor.execute(
+        """
+        SELECT id
+        FROM users
+        WHERE LOWER(username) = LOWER(?)
+        """,
+        (username,)
     )
 
+    if cursor.fetchone():
 
-    connection = None
-
-
-    try:
-
-        connection = get_connection()
-
-        cursor = connection.cursor()
-
-
-        cursor.execute(
-            """
-            INSERT INTO users (
-                username,
-                password
-            )
-            VALUES (?, ?)
-            """,
-            (
-                username,
-                hashed_password
-            )
-        )
-
-
-        connection.commit()
-
-
-        return (
-            True,
-            "Account created successfully."
-        )
-
-
-    except sqlite3.IntegrityError:
+        conn.close()
 
         return (
             False,
             "Username already exists."
         )
 
+    # --------------------------------------------------------
+    # CHECK EMAIL
+    # --------------------------------------------------------
 
-    except sqlite3.Error as error:
+    cursor.execute(
+        """
+        SELECT id
+        FROM users
+        WHERE LOWER(email) = LOWER(?)
+        """,
+        (email,)
+    )
+
+    if cursor.fetchone():
+
+        conn.close()
+
+        return (
+            False,
+            "An account already exists with this email."
+        )
+
+    # --------------------------------------------------------
+    # HASH PASSWORD
+    # --------------------------------------------------------
+
+    hashed_password = hash_password(
+        password
+    )
+
+    # --------------------------------------------------------
+    # CREATE USER
+    # --------------------------------------------------------
+
+    try:
+
+        cursor.execute(
+            """
+            INSERT INTO users (
+                username,
+                email,
+                password
+            )
+            VALUES (?, ?, ?)
+            """,
+            (
+                username,
+                email,
+                hashed_password
+            )
+        )
+
+        conn.commit()
+        conn.close()
+
+        return (
+            True,
+            "Account created successfully."
+        )
+
+    except sqlite3.IntegrityError:
+
+        conn.close()
+
+        return (
+            False,
+            "Unable to create account. Username may already exist."
+        )
+
+    except Exception as error:
+
+        conn.close()
 
         return (
             False,
             f"Unable to create account: {error}"
         )
-
-
-    finally:
-
-        if connection is not None:
-            connection.close()
 
 
 # ============================================================
@@ -373,143 +243,213 @@ def authenticate_user(
     username,
     password
 ):
+    """
+    Authenticate user using username and password.
+    """
 
-    username = normalize_username(
-        username
+    username = username.strip()
+
+    if not username or not password:
+        return False, None
+
+    hashed_password = hash_password(
+        password
     )
 
+    conn = get_connection()
+    cursor = conn.cursor()
 
-    if (
-        not username
-        or
-        not password
+    cursor.execute(
+        """
+        SELECT
+            id,
+            username,
+            email
+        FROM users
+        WHERE LOWER(username) = LOWER(?)
+        AND password = ?
+        """,
+        (
+            username,
+            hashed_password
+        )
+    )
+
+    user = cursor.fetchone()
+
+    conn.close()
+
+    if user:
+        return True, user
+
+    return False, None
+
+
+# ============================================================
+# VERIFY USER FOR PASSWORD RESET
+# ============================================================
+
+def verify_reset_user(
+    username,
+    email
+):
+    """
+    Verify that username and email belong
+    to the same registered account.
+    """
+
+    username = username.strip()
+    email = email.strip().lower()
+
+    if not username or not email:
+        return False
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT id
+        FROM users
+        WHERE LOWER(username) = LOWER(?)
+        AND LOWER(email) = LOWER(?)
+        """,
+        (
+            username,
+            email
+        )
+    )
+
+    user = cursor.fetchone()
+
+    conn.close()
+
+    return user is not None
+
+
+# ============================================================
+# RESET PASSWORD
+# ============================================================
+
+def reset_password(
+    username,
+    email,
+    new_password
+):
+    """
+    Reset password after verifying
+    username and registered email.
+    """
+
+    username = username.strip()
+    email = email.strip().lower()
+
+    # --------------------------------------------------------
+    # VALIDATION
+    # --------------------------------------------------------
+
+    if not username:
+        return False, "Username is required."
+
+    if not email:
+        return False, "Email address is required."
+
+    if not new_password:
+        return False, "New password is required."
+
+    if len(new_password) < 6:
+        return (
+            False,
+            "Password must contain at least 6 characters."
+        )
+
+    # --------------------------------------------------------
+    # VERIFY ACCOUNT
+    # --------------------------------------------------------
+
+    if not verify_reset_user(
+        username,
+        email
     ):
 
         return (
             False,
-            None
+            "Username and registered email do not match."
         )
 
+    # --------------------------------------------------------
+    # HASH NEW PASSWORD
+    # --------------------------------------------------------
 
-    connection = None
+    hashed_password = hash_password(
+        new_password
+    )
 
+    # --------------------------------------------------------
+    # UPDATE PASSWORD
+    # --------------------------------------------------------
 
-    try:
+    conn = get_connection()
+    cursor = conn.cursor()
 
-        connection = get_connection()
-
-        cursor = connection.cursor()
-
-
-        # Fetch the stored password hash first.
-        cursor.execute(
-            """
-            SELECT
-                id,
-                username,
-                password
-            FROM users
-            WHERE username = ?
-            """,
-            (
-                username,
-            )
+    cursor.execute(
+        """
+        UPDATE users
+        SET password = ?
+        WHERE LOWER(username) = LOWER(?)
+        AND LOWER(email) = LOWER(?)
+        """,
+        (
+            hashed_password,
+            username,
+            email
         )
+    )
 
+    conn.commit()
 
-        user_record = cursor.fetchone()
+    updated_rows = cursor.rowcount
 
+    conn.close()
 
-        if user_record is None:
-
-            return (
-                False,
-                None
-            )
-
-
-        user_id = (
-            user_record[0]
-        )
-
-        stored_username = (
-            user_record[1]
-        )
-
-        stored_password = (
-            user_record[2]
-        )
-
-
-        password_valid = verify_password(
-            password,
-            stored_password
-        )
-
-
-        if not password_valid:
-
-            return (
-                False,
-                None
-            )
-
-
-        # ====================================================
-        # OPTIONAL LEGACY HASH UPGRADE
-        # ====================================================
-        # Existing users created with the older SHA-256
-        # implementation are automatically upgraded after
-        # a successful login.
-        # ====================================================
-
-        if "$" not in stored_password:
-
-            new_password_hash = (
-                hash_password(
-                    password
-                )
-            )
-
-
-            cursor.execute(
-                """
-                UPDATE users
-                SET password = ?
-                WHERE id = ?
-                """,
-                (
-                    new_password_hash,
-                    user_id
-                )
-            )
-
-
-            connection.commit()
-
-
-        # app.py expects user[1] to contain username.
-        user = (
-            user_id,
-            stored_username
-        )
-
+    if updated_rows > 0:
 
         return (
             True,
-            user
+            "Password reset successfully."
         )
 
-
-    except sqlite3.Error:
-
-        return (
-            False,
-            None
-        )
+    return (
+        False,
+        "Unable to reset password."
+    )
 
 
-    finally:
+# ============================================================
+# CHECK EMAIL EXISTS
+# ============================================================
 
-        if connection is not None:
-            connection.close()
+def email_exists(email):
+    """
+    Check whether an email is already registered.
+    """
+
+    email = email.strip().lower()
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT id
+        FROM users
+        WHERE LOWER(email) = LOWER(?)
+        """,
+        (email,)
+    )
+
+    result = cursor.fetchone()
+
+    conn.close()
+
+    return result is not None
